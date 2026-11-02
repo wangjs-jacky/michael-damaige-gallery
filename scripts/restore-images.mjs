@@ -1,0 +1,5 @@
+import fs from 'node:fs/promises';import path from 'node:path';import {createHash} from 'node:crypto';
+const catalog=JSON.parse(await fs.readFile('public/catalog.json','utf8'));const base=process.env.GALLERY_ORIGIN||'https://michael-damaige-gallery.jacky-openbird.workers.dev';
+const pending=catalog.videos.flatMap(v=>v.images);let count=0;
+async function worker(){while(pending.length){const im=pending.shift(),target=path.join('public',im.src);try{const b=await fs.readFile(target);if(createHash('sha256').update(b).digest('hex')===im.sha256){count++;continue;}}catch{}const r=await fetch(new URL(im.src,base),{signal:AbortSignal.timeout(60000)});if(!r.ok)throw Error(`${im.src}: HTTP ${r.status}`);const b=Buffer.from(await r.arrayBuffer());if(createHash('sha256').update(b).digest('hex')!==im.sha256)throw Error('哈希不符 '+im.src);await fs.mkdir(path.dirname(target),{recursive:true});await fs.writeFile(target,b);count++;}}
+await Promise.all(Array.from({length:4},worker));console.log(`已恢复并核对 ${count} 张原图。`);

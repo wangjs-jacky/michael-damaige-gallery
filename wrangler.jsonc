@@ -1,0 +1,6 @@
+{
+  "name": "michael-damaige-gallery",
+  "compatibility_date": "2026-11-02",
+  "workers_dev": true,
+  "assets": { "directory": "./public", "not_found_handling": "404-page" }
+}

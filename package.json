@@ -1,0 +1,16 @@
+{
+  "name": "@wangjs-jacky/michael-damaige-gallery",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "node scripts/check.mjs",
+    "restore-images": "node scripts/restore-images.mjs",
+    "preview": "node scripts/serve.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "4.144.0"
+  }
+}
