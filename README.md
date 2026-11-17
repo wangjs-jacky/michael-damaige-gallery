@@ -2,7 +2,7 @@
 
 一个非官方视频字幕长图集：**121期、382张1080像素宽的原图**。保留原画面和原话，支持按视频标题、已选字幕搜索，单期长图阅读、B站原片回查、单张/单期/全部原图下载。
 
-- 在线图集：https://michael-damaige-gallery.jacky-openbird.workers.dev
+- 在线图集：https://damaige.paws.rodeo/
 - 原作者：https://space.bilibili.com/324213598
 - [全部原图 ZIP](https://jacky-bucket-hk.oss-cn-hongkong.aliyuncs.com/michael-damaige-gallery/2026-11-03/michael-damaige-121-videos-382-images.zip)
 - [公开作品索引](public/catalog.json)：逐期来源、图片尺寸、字节数、SHA-256、已选字幕与原图包。
