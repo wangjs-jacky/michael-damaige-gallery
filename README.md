@@ -8,7 +8,7 @@
 
 把 [Michael大麦哥](https://space.bilibili.com/324213598) 的视频画面与原话字幕整理成一张张可直接翻看、收藏与分享的纵向长图卡片——搜一句话，就能回到说话的那一刻。
 
-[在线浏览图集 ↗](https://damaige.paws.rodeo/) · [下载全部原图](https://jacky-bucket-hk.oss-cn-hongkong.aliyuncs.com/michael-damaige-gallery/2026-11-03/michael-damaige-121-videos-382-images.zip) · [去 B 站关注原作者 ↗](https://space.bilibili.com/324213598)
+[在线浏览图集 ↗](https://damaige.paws.rodeo/) · [按视频链接下载](https://damaige.paws.rodeo/download/) · [去 B 站关注原作者 ↗](https://space.bilibili.com/324213598)
 
 ## 动机
 
@@ -33,7 +33,17 @@
 | **一句话搜全库** | 输入标题、年份或字幕里的任意关键词，立刻定位到那一期 |
 | **原画面纵向卡片** | 完整保留原片画面与原话字幕，适合手机和电脑快速翻阅或社媒分享 |
 | **一键回看原片** | 每张卡片均附带原片时间点，随时跳回 B 站看完整上下文 |
-| **随手保存原图** | 支持单张保存、按期下载，或一次性打包收藏全部长图 |
+| **随手保存原图** | 支持单张保存，或按请求下载某一期的原图包 |
+
+## 从 B 站链接下载
+
+打开 [链接下载页](https://damaige.paws.rodeo/download/)，粘贴视频链接、B站分享文案、`b23.tv` 链接或 BV 号，找到对应图集后下载整期图片。也可以把视频网址的 `www.bilibili.com` 替换为 `damaige.paws.rodeo`，保留 `/video/BV…/`，直接取得已收录的图集包。图片包在请求时由这一期的原图流式组成，不提前打包。
+
+逐期同步脚本可自动发现未收录的新投稿，串行完成转写、原话选段、画面检查、制卡和增量发布。新卡片保留待核对状态；当前为单次触发，尚未启用定时后台服务或网页生成任务。配置与恢复规则见 [逐期流水线](docs/episode-pipeline.md)。
+
+链接解析由轻量 Worker 提供，开发时使用 `npm run dev`；`scripts/serve.mjs` 仅提供静态图集浏览。运行 `npm test` 验证解析、跳转和发布保护。正式发布从当前生产快照追加本次页面与 Worker，不能用旧 GitHub 首页覆盖较新的照片墙；见 [实现与验收记录](docs/link-download.md)。
+
+`npm run deploy -- <部署工作区> <新快照名> <当前快照名>` 默认只检查冻结文件；明确追加 `--apply` 才执行发布，发布前会核对现网基线。保留当前快照用于回退，不直接把仓库的 `public/` 覆盖到正式站。
 
 ## 版权与说明
 
@@ -43,7 +53,7 @@
 <details>
 <summary>本地运行与仓库维护</summary>
 
-需要 Node.js 22+ 与 `curl`，恢复公开原图后即可本地启动预览（原图独立托管，不进入 Git 历史）：
+需要 Node.js 24+ 与 `curl`，恢复公开原图后即可本地启动预览（原图独立托管，不进入 Git 历史）：
 
 ```bash
 npm ci && npm run restore-images && node scripts/serve.mjs

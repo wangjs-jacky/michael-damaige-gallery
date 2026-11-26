@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 
 const run = promisify(execFile);
 const catalog = JSON.parse(await fs.readFile('public/catalog.json', 'utf8'));
-const origin = process.env.GALLERY_ORIGIN || 'https://michael-damaige-gallery.jacky-openbird.workers.dev';
+const origin = process.env.GALLERY_ORIGIN || 'https://damaige.paws.rodeo';
 const pending = catalog.videos.flatMap(video => video.images);
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 let count = 0;

@@ -5,12 +5,19 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "node scripts/deploy-link-download.mjs",
     "check": "node scripts/check.mjs",
+    "test": "node --test scripts/*.test.mjs scripts/pipeline/*.test.mjs",
+    "sync": "node scripts/pipeline/cli.mjs sync",
+    "pipeline": "node scripts/pipeline/cli.mjs",
     "restore-images": "node scripts/restore-images.mjs",
     "preview": "node scripts/serve.mjs"
   },
   "devDependencies": {
-    "wrangler": "4.144.0"
+    "esbuild": "0.28.2",
+    "wrangler": "4.168.0"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

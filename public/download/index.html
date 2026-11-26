@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#181A1E">
+  <meta name="description" content="粘贴大麦哥的B站视频链接、分享文案或BV号，下载这一期的原图合集。">
+  <title>从 B 站链接下载 · 大麦哥图集</title>
+  <link rel="icon" type="image/png" href="/damaige-sticker.png">
+  <link rel="stylesheet" href="/download/page.css">
+  <script src="/download/page.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳到主要内容</a>
+  <header class="site-header">
+    <a class="brand" href="/"><img src="/damaige-sticker.png" width="42" height="42" alt=""><span>大麦哥图集</span></a>
+    <button class="theme-button" id="theme" type="button" aria-label="切换浅色主题">浅色</button>
+  </header>
+  <main id="main">
+    <a class="back" href="/">← 返回作品墙</a>
+    <section class="intro" aria-labelledby="title">
+      <p class="eyebrow">从看过，到留住。</p>
+      <h1 id="title">把这一期，<br>收进你的图集。</h1>
+      <p class="description">粘贴大麦哥的 B 站视频链接，下载这一期的原画面长图。</p>
+    </section>
+    <form id="download-form" novalidate>
+      <label for="video-link">视频链接或 BV 号</label>
+      <textarea id="video-link" name="input" rows="3" maxlength="4096" placeholder="粘贴 B 站分享文案、b23.tv 短链，或 BV 号" required aria-describedby="input-hint feedback" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+      <div class="form-footer"><p id="input-hint">支持完整链接、短链和分享文案</p><button class="primary" id="resolve" type="submit">获取图集 <span aria-hidden="true">→</span></button></div>
+    </form>
+    <p id="feedback" role="status" aria-live="polite" hidden></p>
+    <article id="result" aria-labelledby="result-title" hidden>
+      <p class="result-label">找到这期图集</p>
+      <h2 id="result-title"></h2>
+      <p class="result-meta" id="result-meta"></p>
+      <div class="result-actions"><a id="download" class="button primary" download>下载整期图片 <span aria-hidden="true">↓</span></a><a id="read" class="button">先看图集</a></div>
+      <p class="download-note" id="download-note">ZIP 包解压后，即可保存原图。</p>
+    </article>
+    <details class="guide">
+      <summary>在电脑上，改一下域名就能下载</summary>
+      <p>把视频网址中的 <code>www.bilibili.com</code> 换成 <code>damaige.paws.rodeo</code>，保留后面的 <code>/video/BV…/</code>。</p>
+      <div class="example"><span>例如，这期视频的下载链接</span><code id="direct-example">https://damaige.paws.rodeo/video/BV1LwhB65E8e/</code><button type="button" id="copy-example">复制示例链接</button></div>
+    </details>
+    <p class="scope-note">仅下载已收录的图片集，未收录的视频不会自动生成。<br>画面与原话归 Michael大麦哥所有，<a href="https://space.bilibili.com/324213598" target="_blank" rel="noopener noreferrer">去 B 站支持原作者 ↗</a></p>
+  </main>
+</body>
+</html>
