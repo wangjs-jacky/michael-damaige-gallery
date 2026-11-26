@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "node scripts/deploy-link-download.mjs",
     "check": "node scripts/check.mjs",
     "test": "node --test scripts/*.test.mjs",
     "restore-images": "node scripts/restore-images.mjs",

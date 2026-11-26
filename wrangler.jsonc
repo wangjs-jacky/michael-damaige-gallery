@@ -1,6 +1,9 @@
 {
   "name": "michael-damaige-gallery",
   "compatibility_date": "2026-11-02",
-  "workers_dev": true,
-  "assets": { "directory": "./public", "not_found_handling": "404-page" }
+  "main": "src/worker.mjs",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "damaige.paws.rodeo", "zone_name": "paws.rodeo", "custom_domain": true }],
+  "assets": { "directory": "./public", "binding": "ASSETS", "not_found_handling": "404-page", "run_worker_first": ["/api/*", "/video/*", "/download/BV*"] }
 }
