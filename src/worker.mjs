@@ -1,3 +1,5 @@
+import { buildArchivePlan, createArchiveResponse } from './episode-archive.mjs';
+
 const BV = /^BV1[A-Za-z0-9]{9}$/;
 const VIDEO_HOSTS = new Set(['www.bilibili.com', 'm.bilibili.com', 'bilibili.com']);
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
@@ -88,15 +90,9 @@ async function findVideo(env, request, bvid) {
   }
 }
 
-function packageURL(video, origin) {
-  // The target comes exclusively from our deployed catalogue, never from input.
-  const url = new URL(video.download?.url ?? '', origin);
-  const ownPackage = url.origin === origin && url.pathname === `/downloads/${video.bvid}.zip`;
-  const originalOSS = url.hostname === 'jacky-bucket-hk.oss-cn-hongkong.aliyuncs.com' && url.pathname === `/michael-damaige-gallery/2026-11-03/${video.bvid}.zip`;
-  if (url.username || url.password || url.search || url.hash || (!ownPackage && !(originalOSS && url.protocol === 'https:' && !url.port))) {
-    throw new DownloadError('PACKAGE_UNAVAILABLE', '这一期的下载包暂时不可用，你可以先阅读图集。', 503);
-  }
-  return ownPackage ? url.pathname : url.href;
+function archivePlan(video) {
+  try { return buildArchivePlan(video); }
+  catch { throw new DownloadError('ARCHIVE_UNAVAILABLE', '这一期的原图信息暂时不完整，你可以先阅读图集。', 503); }
 }
 
 const json = (body, status = 200, headers = {}) => Response.json(body, { status, headers: { ...HEADERS, ...headers } });
@@ -120,8 +116,8 @@ export default {
         const bvid = await resolveInput(body?.input);
         const video = await findVideo(env, request, bvid);
         if (!video) throw new DownloadError('NOT_COLLECTED', '这期视频暂未收录。你可以浏览已有图集，或换一条链接。', 404);
-        const downloadUrl = packageURL(video, url.origin);
-        return json({ bvid, title: video.title, imageCount: video.images.length, bytes: video.download.bytes, sha256: video.download.sha256, downloadUrl, readUrl: `/#video=${bvid}`, sourceUrl: `https://www.bilibili.com/video/${bvid}/` });
+        const plan = archivePlan(video);
+        return json({ bvid, title: video.title, imageCount: plan.entries.length, bytes: plan.bytes, entries: plan.entries, downloadUrl: `/video/${bvid}/?raw=1`, readUrl: `/#video=${bvid}`, sourceUrl: `https://www.bilibili.com/video/${bvid}/` });
       }
       if (url.pathname.startsWith('/api/')) return json({ code: 'NOT_FOUND', message: '没有这个接口。' }, 404);
       if (url.pathname.startsWith('/video/') || url.pathname.startsWith('/download/BV')) {
@@ -130,8 +126,19 @@ export default {
         if (!match) return redirect('/download/?error=invalid');
         const video = await findVideo(env, request, match[1]);
         if (!video) return redirect(`/download/?bvid=${match[1]}`);
-        const target = packageURL(video, url.origin);
-        if (url.searchParams.get('raw') === '1') return redirect(target);
+        const plan = archivePlan(video);
+        if (url.searchParams.get('raw') === '1') {
+          if (request.method === 'HEAD') return new Response(null, { headers: {
+            ...HEADERS, 'cache-control': 'no-store, no-transform',
+            'content-type': 'application/zip', 'content-length': String(plan.bytes),
+            'content-disposition': `attachment; filename="${video.bvid}.zip"`,
+          } });
+          // Each original is opened lazily by the stream. No prebuilt ZIP lookup,
+          // client Range propagation, external fetch or whole-archive buffering.
+          const response = createArchiveResponse(video, src => env.ASSETS.fetch(new Request(new URL(src, request.url))));
+          for (const [name, value] of Object.entries(HEADERS)) if (!response.headers.has(name)) response.headers.set(name, value);
+          return response;
+        }
         return redirect(`/download/?video=${video.bvid}&auto=1`);
       }
       return env.ASSETS.fetch(request);

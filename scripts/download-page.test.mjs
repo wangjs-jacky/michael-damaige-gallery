@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash, webcrypto } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { Script, createContext } from 'node:vm';
+import { createArchiveResponse } from '../src/episode-archive.mjs';
 
 // Execute the shipped script with DOM, network and clock boundaries only.
 // These tests verify integrity and save requests, not browser filesystem access.
@@ -10,12 +11,19 @@ const page = new Script(await readFile(new URL('../public/download/page.js', imp
 const origin = 'https://gallery.example';
 const bvid = 'BV1LwhB65E8e';
 const otherBvid = 'BV1fvpX6BEY5';
-const packageBytes = Uint8Array.from([0x50, 0x4b, 0x05, 0x06, ...Array(18).fill(0)]);
-const expectedSHA = createHash('sha256').update(packageBytes).digest('hex');
-const expectedDigest = Uint8Array.from(createHash('sha256').update(packageBytes).digest()).buffer;
+const digits = new TextEncoder().encode('123456789');
+const greeting = new TextEncoder().encode('hello world\n');
+const sha = bytes => createHash('sha256').update(bytes).digest('hex');
+const expectedDigest = Uint8Array.from(createHash('sha256').update(digits).digest()).buffer;
+const entries = [
+  { name: 'digits.png', src: `/images/${bvid}/digits.png`, bytes: 9, crc32: 0xcbf43926, sha256: sha(digits) },
+  { name: 'greeting.png', src: `/images/${bvid}/greeting.png`, bytes: 12, crc32: 0xaf083b2d, sha256: sha(greeting) },
+];
+const fixtureVideo = { bvid, images: entries.map(entry => ({ ...entry, id: entry.name.slice(0, -4) })) };
+const packageBytes = new Uint8Array(await createArchiveResponse(fixtureVideo, src => new Response(src.endsWith('/digits.png') ? digits : greeting)).arrayBuffer());
 const collection = {
-  bvid, title: '测试图集', imageCount: 9, bytes: packageBytes.length, sha256: expectedSHA,
-  downloadUrl: `/downloads/${bvid}.zip`, readUrl: `/#video=${bvid}`,
+  bvid, title: '测试图集', imageCount: 2, bytes: packageBytes.length, entries,
+  downloadUrl: `/video/${bvid}/?raw=1`, readUrl: `/#video=${bvid}`,
   sourceUrl: `https://www.bilibili.com/video/${bvid}/`,
 };
 const zipResponse = (bytes = packageBytes) => new Response(bytes, { headers: { 'content-type': 'application/zip' } });
@@ -28,8 +36,14 @@ function deferred() {
 
 function delayedDigest() {
   const started = deferred(), completed = deferred();
+  let first = true;
   return {
-    crypto: { subtle: { digest() { started.resolve(); return completed.promise; } } },
+    crypto: { subtle: { digest(algorithm, bytes) {
+      if (!first) return webcrypto.subtle.digest(algorithm, bytes);
+      first = false;
+      started.resolve();
+      return completed.promise;
+    } } },
     started: started.promise,
     finish: () => completed.resolve(expectedDigest),
   };
@@ -105,7 +119,7 @@ function createPage(options = {}) {
     location: { origin, search: options.search ?? '' },
     localStorage: { getItem() { return null; }, setItem() {} },
     navigator: { clipboard: { async writeText() {} } },
-    URL: PageURL, URLSearchParams, Blob, Uint8Array, AbortController, DOMException,
+    URL: PageURL, URLSearchParams, Blob, Uint8Array, TextEncoder, AbortController, DOMException,
     crypto: options.crypto === undefined ? webcrypto : options.crypto,
     setTimeout(callback, milliseconds) {
       const id = ++timerId;
@@ -174,6 +188,7 @@ test('invalid video parameters cannot trigger automatic resolve or save requests
   for (const search of [
     '?video=invalid&auto=1',
     `?video=${bvid}suffix&auto=1`,
+    `?video=${bvid}%0A&auto=1`,
     '?video=https%3A%2F%2Fevil.test%2Fvideo%2FBV1LwhB65E8e&auto=1',
     '?video=&auto=1',
     `?bvid=${bvid}&auto=1`,
@@ -203,13 +218,63 @@ test('a verified package requests exactly one Blob save despite another pending 
   assert.equal(app.revoked.length, 1);
 });
 
-test('a same-length package with the wrong SHA is refused and the download link recovers', { timeout: 2000 }, async () => {
-  const damaged = packageBytes.slice();
-  damaged[10] ^= 1;
-  const app = createPage({ download: () => zipResponse(damaged) });
-  await app.submit();
-  await app.clickDownload().done;
-  assertFailed(app);
+test('a same-length package with the wrong member SHA is refused and the download link recovers', { timeout: 2000 }, async () => {
+  for (const dataOffset of [40, 91]) { // Data starts for digits.png and greeting.png.
+    const damaged = packageBytes.slice();
+    damaged[dataOffset] ^= 1;
+    const app = createPage({ download: () => zipResponse(damaged) });
+    await app.submit();
+    await app.clickDownload().done;
+    assertFailed(app);
+  }
+});
+
+test('missing or extra expected members cannot pass archive validation', { timeout: 2000 }, async () => {
+  for (const expected of [entries.slice(0, 1), [...entries, { name: 'extra.png', src: `/images/${bvid}/extra.png`, bytes: 9, crc32: 0xcbf43926, sha256: sha(digits) }]]) {
+    const app = createPage({ collection: { entries: expected, imageCount: expected.length } });
+    await app.submit();
+    await app.clickDownload().done;
+    assertFailed(app);
+  }
+});
+
+test('ZIP directory, format and header corruption is rejected before save', { timeout: 2000 }, async () => {
+  const directoryOffset = new DataView(packageBytes.buffer).getUint32(packageBytes.length - 6, true);
+  for (const corrupt of [
+    view => view.setUint16(8, 8, true), // Compression is outside the Store contract.
+    view => view.setUint16(6, 0x0808, true), // Data descriptors are forbidden.
+    view => view.setUint16(6, 0, true), // UTF8 flag is part of the contract.
+    view => view.setUint32(14, 0, true), // Local CRC must agree with the manifest.
+    view => view.setUint32(22, 1, true), // Original size must match the manifest.
+    view => view.setUint8(30, 0x2e), // Local filename must match the manifest.
+    view => view.setUint32(directoryOffset + 42, 1, true), // Wrong local-header pointer.
+    view => view.setUint32(directoryOffset + 16, 0, true), // Central CRC mismatch.
+    view => view.setUint8(directoryOffset + 46, 0x2e), // Central filename mismatch.
+    view => view.setUint32(packageBytes.length - 10, 1, true), // Wrong central size.
+    view => view.setUint32(packageBytes.length - 22, 0, true), // Missing EOCD signature.
+  ]) {
+    const damaged = packageBytes.slice();
+    corrupt(new DataView(damaged.buffer));
+    const app = createPage({ download: () => zipResponse(damaged) });
+    await app.submit();
+    await app.clickDownload().done;
+    assertFailed(app);
+  }
+});
+
+test('malformed member metadata cannot silently fall back to an unverified download', { timeout: 2000 }, async () => {
+  for (const patch of [
+    { sha256: undefined }, { crc32: -1 }, { bytes: 0 },
+    { name: '../digits.png' }, { name: 'digits.png\u2028' },
+    { src: `/images/${otherBvid}/digits.png` },
+  ]) {
+    const app = createPage({ collection: { entries: [{ ...entries[0], ...patch }, entries[1]] } });
+    await app.submit();
+    const clicked = app.clickDownload();
+    await clicked.done;
+    assert.equal(clicked.event.defaultPrevented, true);
+    assertFailed(app);
+  }
 });
 
 test('a pending fetch is aborted after the 180 second deadline and can be retried', { timeout: 2000 }, async () => {
@@ -261,7 +326,8 @@ test('editing the input while SHA is pending prevents the old package from being
 test('resubmitting the form rejects an old package and preserves the new collection', { timeout: 2000 }, async () => {
   const digest = delayedDigest();
   const app = createPage({ crypto: digest.crypto, resolve: input => ({
-    ...collection, bvid: input, title: input === bvid ? '旧图集' : '新图集', downloadUrl: `/downloads/${input}.zip`,
+    ...collection, bvid: input, title: input === bvid ? '旧图集' : '新图集', downloadUrl: `/video/${input}/?raw=1`,
+    entries: entries.map(entry => ({ ...entry, src: entry.src.replace(bvid, input) })),
   }) });
   await app.submit();
   const pending = app.clickDownload();
@@ -272,7 +338,7 @@ test('resubmitting the form rejects an old package and preserves the new collect
   assert.equal(app.saves.length, 0);
   assert.equal(app.element('#result-title').textContent, '新图集');
   assert.equal(app.element('#result').hidden, false);
-  assert.equal(app.element('#download').href, origin + `/downloads/${otherBvid}.zip`);
+  assert.equal(app.element('#download').href, origin + `/video/${otherBvid}/?raw=1`);
   assert.doesNotMatch(app.element('#download-note').textContent, /未完成|已校验/);
   await app.clickDownload().done;
   assert.equal(app.saves.length, 1);
@@ -280,7 +346,7 @@ test('resubmitting the form rejects an old package and preserves the new collect
 });
 
 for (const [name, options] of [
-  ['missing SHA', { collection: { sha256: undefined } }],
+  ['missing entries', { collection: { entries: undefined } }],
   ['missing crypto', { crypto: null }],
   ['an external package', { collection: { downloadUrl: `https://jacky-bucket-hk.oss-cn-hongkong.aliyuncs.com/michael-damaige-gallery/2026-11-03/${bvid}.zip` } }],
 ]) {

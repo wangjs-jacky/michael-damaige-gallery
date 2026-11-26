@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  buildUploadMetadata, createAssetHasher, validateCloudSettings, validateConfigurationPair, validateHeadersPair,
+  buildUploadMetadata, createAssetHasher, validateCloudSettings, validateConfigurationPair, validateHeadersPair, validateReconciliationScope,
 } from './deploy-link-download.mjs';
 
 const accountId = 'a'.repeat(32);
@@ -20,6 +20,15 @@ const settings = {
   compatibility_date: baseline.compatibility_date, compatibility_flags: [], logpush: false,
   usage_model: 'standard', bindings: [],
 };
+
+test('只读对账不能以同首页掩盖Worker或静态资源版本变化', () => {
+  const snapshot = (worker, page) => ({ manifest: { changeProof: { source: 'change-proof.json' }, controls: { worker: { sha256: worker } }, files: [{ source: 'index.html', sha256: page }] } });
+  const before = snapshot('worker-one', 'page-one');
+  validateReconciliationScope(snapshot('worker-one', 'page-two'), before);
+  assert.throws(() => validateReconciliationScope(snapshot('worker-two', 'page-one'), before));
+  assert.throws(() => validateReconciliationScope(snapshot('worker-two', 'page-two'), before));
+  assert.throws(() => validateReconciliationScope(snapshot('worker-one', 'page-one'), before));
+});
 
 test('允许原静态站升级为限定模块，也允许完整回退', () => {
   validateConfigurationPair(moduleConfig(), baseline, accountId);

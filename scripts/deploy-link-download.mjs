@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { isDeepStrictEqual } from 'node:util';
+import { isDeepStrictEqual, promisify } from 'node:util';
+import { validateEpisodeProof } from './pipeline/proof.mjs';
 
 const scriptName = 'michael-damaige-gallery';
 const origin = 'https://damaige.paws.rodeo';
@@ -14,6 +15,16 @@ const featureFiles = new Set(['index.html', 'download/index.html', 'download/pag
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const sha256 = data => createHash('sha256').update(data).digest('hex');
 const readJSON = async path => JSON.parse(await readFile(path, 'utf8'));
+const execute = promisify(execFile);
+async function readPublicHomepage() {
+  // Use the same proxy-aware CLI path as image restoration. This is one bounded
+  // read, not an automatic readiness/retry loop after activation.
+  try {
+    const { stdout } = await execute('curl', ['--fail', '--silent', '--show-error', '--connect-timeout', '15', '--max-time', '40',
+      '--header', 'Cache-Control: no-cache', origin + '/'], { encoding: 'buffer', maxBuffer: 4 * 1024 * 1024, timeout: 45000 });
+    return stdout;
+  } catch { throw new Error('正式首页单次读取未完成；未自动重试。'); }
+}
 const same = (actual, expected, message) => assert(isDeepStrictEqual(actual, expected), message);
 const bindingsFor = config => config.main ? [{ name: 'ASSETS', type: 'assets' }] : [];
 
@@ -164,6 +175,21 @@ export async function checkLocalReleasePair(project, targetName, baselineName) {
   const targetFiles = new Map(target.manifest.files.map(file => [file.source, file]));
   const baselineFiles = new Map(baseline.manifest.files.map(file => [file.source, file]));
   const changed = [];
+  if (baseline.manifest.changeProof?.source === 'change-proof.json') {
+    const proofBytes = await readFile(join(baseline.path, 'change-proof.json'));
+    assert.equal(sha256(proofBytes), baseline.manifest.changeProof.sha256, '当前快照的回退证明已变化');
+    const proof = JSON.parse(proofBytes);
+    if (proof.baseline?.manifest?.sha256 === target.manifestSha256) {
+      // Only the exact immediate parent is eligible; validate the complete
+      // forward delta in reverse before allowing this explicitly chosen target.
+      const reverse = await validateEpisodeProof(baseline, target);
+      return { target, baseline, changed: reverse, direction: 'rollback', checkSite };
+    }
+  }
+  if (target.manifest.changeProof) {
+    const incrementalChanges = await validateEpisodeProof(target, baseline);
+    return { target, baseline, changed: incrementalChanges, direction: 'forward', checkSite };
+  }
   for (const source of new Set([...targetFiles.keys(), ...baselineFiles.keys()])) {
     const next = targetFiles.get(source), previous = baselineFiles.get(source);
     if (next?.sha256 === previous?.sha256 && next?.bytes === previous?.bytes) continue;
@@ -219,13 +245,13 @@ async function applyRelease(project, targetName, baselineName, local, hashAssetF
   async function verifyProduction(snapshot) {
     const [domains, subdomain, settings, page] = await Promise.all([
       request('/domains'), request(script + '/subdomain'), request(script + '/settings'),
-      fetch(origin + '/', { headers: { 'cache-control': 'no-cache' }, redirect: 'error', signal: AbortSignal.timeout(35000) }),
+      readPublicHomepage(),
     ]);
     assert(domains.some(domain => domain.hostname === new URL(origin).hostname &&
       domain.service === scriptName && domain.environment === 'production'), '正式域名映射已变化。');
     assert(!subdomain.enabled && !subdomain.previews_enabled, '默认域或版本预览开关已变化。');
     const expected = snapshot.manifest.files.find(file => file.source === 'index.html');
-    assert(page.ok && sha256(Buffer.from(await page.arrayBuffer())) === expected?.sha256, '正式首页与冻结基线 SHA256 不一致。');
+    assert(sha256(page) === expected?.sha256, '正式首页与冻结基线 SHA256 不一致。');
     validateCloudSettings(settings, snapshot.config);
     return settings;
   }
@@ -298,18 +324,56 @@ async function applyRelease(project, targetName, baselineName, local, hashAssetF
   return { ...receipt, evidence };
 }
 
+export function validateReconciliationScope(target, baseline) {
+  assert(target.manifest.changeProof && target.manifest.controls.worker?.sha256 === baseline.manifest.controls.worker?.sha256,
+    '代码发生变化，不能仅凭首页对账；需要独立核对实际 Worker 源码或固化版本标记。');
+  const page = manifest => manifest.files.find(f => f.source === 'index.html')?.sha256;
+  assert(page(target.manifest) && page(target.manifest) !== page(baseline.manifest),
+    '首页未变化，不能用首页摘要证明新资源版本已激活。');
+}
+
+async function verifyCurrentRelease(project, targetName, target, baseline) {
+  validateReconciliationScope(target, baseline);
+  const token = existingAuthorization(join(repo, 'node_modules/wrangler/bin/wrangler.js'));
+  const endpoint = `https://api.cloudflare.com/client/v4/accounts/${target.config.account_id}/workers`;
+  const get = async path => {
+    const response = await fetch(endpoint + path, { headers: { authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(45000) });
+    const payload = await response.json();
+    assert(response.ok && payload.success, '云端只读核验失败：' + path);
+    return payload.result;
+  };
+  const [domains, subdomain, settings, page] = await Promise.all([
+    get('/domains'), get('/scripts/' + scriptName + '/subdomain'), get('/scripts/' + scriptName + '/settings'), readPublicHomepage(),
+  ]);
+  assert(domains.some(d => d.hostname === new URL(origin).hostname && d.service === scriptName && d.environment === 'production'), '正式域映射变化');
+  assert(!subdomain.enabled && !subdomain.previews_enabled, '默认入口开关变化');
+  validateCloudSettings(settings, target.config);
+  const expected = target.manifest.files.find(f => f.source === 'index.html');
+  assert(page.length === expected.bytes && sha256(page) === expected.sha256, '现网首页不是该冻结版本，禁止将结果标为成功');
+  const receipt = { snapshot: targetName, readOnly: true, currentHomepageVerified: true, settingsVerified: true,
+    independentVersionVerified: false, homepageSHA256: expected.sha256, verifiedAt: new Date().toISOString() };
+  const evidence = join(project, 'evidence', `${targetName}-reconciled-${randomUUID()}.json`);
+  await writeFile(evidence, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx' });
+  return { ...receipt, evidence };
+}
+
 export async function main(args = process.argv.slice(2)) {
   const [directory, targetName, baselineName, ...flags] = args;
   assert(directory && targetName && baselineName && (flags.length === 0 ||
-    (flags.length === 1 && flags[0] === '--apply')),
-  '用法：node scripts/deploy-link-download.mjs DEPLOYMENT_DIR TARGET_NAME BASELINE_NAME [--apply]');
+    (flags.length === 1 && ['--apply', '--verify'].includes(flags[0]))),
+  '用法：node scripts/deploy-link-download.mjs DEPLOYMENT_DIR TARGET_NAME BASELINE_NAME [--apply|--verify]');
   const project = await realpath(resolve(directory));
   const local = await checkLocalReleasePair(project, targetName, baselineName);
+  if (flags[0] === '--verify') {
+    const result = await verifyCurrentRelease(project, targetName, local.target, local.baseline);
+    console.log(JSON.stringify(result, null, 2)); return result;
+  }
   const hashAssetFile = await createAssetHasher();
   if (!flags.length) {
     const result = { ready: true, applied: false, cloudChecked: false, authorizationRead: false,
       snapshot: targetName, baseline: baselineName, publicFiles: local.target.manifest.files.length,
       mode: local.target.worker ? 'module' : 'assets-only', changedPublicFiles: local.changed,
+      direction: local.direction || 'feature-update',
       manifestSha256: local.target.manifestSha256,
       workerSha256: local.target.worker ? sha256(local.target.worker) : null };
     console.log(JSON.stringify(result, null, 2));
