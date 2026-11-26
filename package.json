@@ -7,10 +7,11 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "check": "node scripts/check.mjs",
+    "test": "node --test scripts/*.test.mjs",
     "restore-images": "node scripts/restore-images.mjs",
     "preview": "node scripts/serve.mjs"
   },
   "devDependencies": {
-    "wrangler": "4.144.0"
+    "wrangler": "4.168.0"
   }
 }
